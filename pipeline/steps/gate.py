@@ -16,9 +16,56 @@ Tỉ lệ cảnh báo = (số ẢNH khác nhau có ≥ 1 cảnh báo) / (tổng 
 
 Trả về dict: decision, n_errors, n_warn_images, n_images, warn_ratio (làm tròn 4 chữ số), reasons (list[str], giải thích bằng tiếng Việt, có số liệu).
 """
-from ..common import ERROR, WARN  # noqa: F401
+from __future__ import annotations
+
+from ..common import ERROR, WARN
 
 
 def decide(issues, image_stems, cfg, reviewed=frozenset()):
-    # TODO
-    raise NotImplementedError("gate chưa làm")
+    stems_list = list(image_stems)
+    n_images = len(stems_list)
+    stems_set = set(stems_list)
+    rev_set = set(reviewed) if reviewed else set()
+
+    # Lỗi bắt buộc: không bao giờ được bỏ qua (kể cả ảnh nằm trong reviewed)
+    errors = [i for i in issues if i.severity == ERROR or i.severity == "error"]
+    n_errors = len(errors)
+
+    # Cảnh báo: chỉ tính ảnh trong dataset và chưa được người duyệt
+    warn_images = {
+        i.image for i in issues
+        if (i.severity == WARN or i.severity == "warn")
+        and i.image in stems_set
+        and i.image not in rev_set
+    }
+    n_warn_images = len(warn_images)
+
+    warn_ratio = round(n_warn_images / n_images, 4) if n_images > 0 else 0
+
+    reasons: list[str] = []
+    if n_errors > 0:
+        decision = "Rework"
+        reasons.append(f"Còn {n_errors} lỗi bắt buộc cần khắc phục trước khi phát hành")
+    else:
+        warn_ratio_hold = cfg.get("gate", {}).get("warn_ratio_hold", 0.10)
+        if warn_ratio >= warn_ratio_hold:
+            decision = "Hold"
+            reasons.append(
+                f"Tỉ lệ ảnh có cảnh báo {warn_ratio:.2%} >= ngưỡng Hold ({warn_ratio_hold:.2%}) "
+                f"({n_warn_images}/{n_images} ảnh)"
+            )
+        else:
+            decision = "Release"
+            reasons.append(
+                f"Đạt yêu cầu: 0 lỗi bắt buộc, tỉ lệ cảnh báo {warn_ratio:.2%} < {warn_ratio_hold:.2%} "
+                f"({n_warn_images}/{n_images} ảnh)"
+            )
+
+    return {
+        "decision": decision,
+        "n_errors": n_errors,
+        "n_warn_images": n_warn_images,
+        "n_images": n_images,
+        "warn_ratio": warn_ratio,
+        "reasons": reasons,
+    }
